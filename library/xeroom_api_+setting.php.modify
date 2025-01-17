@@ -1,0 +1,1032 @@
+<?php
+/**
+ * Display Xeroom API Settings Template
+ */
+if ( ! defined( 'ABSPATH' ) ) {
+	exit; // Exit if accessed directly
+}
+
+global $wpdb;
+$licenseMessage                = "";
+$licenseErrMessage             = "";
+$message                       = "";
+$xeroCredentialTable           = $wpdb->prefix . "xeroom_credentials";
+$xeroLicActive                 = $wpdb->prefix . "xeroom_license_key_status";
+$shippingCosts                 = '';
+$extraSalesAccount             = '';
+$associated_product_categories = '';
+$display_message               = '';
+$gateway_message               = '';
+
+/**
+ * Read saved settings
+ */
+$sql                    = "SELECT xero_api_key, xero_api_secret FROM " . $xeroCredentialTable . " WHERE id=1";
+$xeroCredentialsFromTbl = $wpdb->get_results( $sql );
+
+$xeroApiKey    = $xeroCredentialsFromTbl[0]->xero_api_key;
+$xeroApiSecret = $xeroCredentialsFromTbl[0]->xero_api_secret;
+
+// Fetch and Save Xero Tax rates if Synch Inventory Master is set on Woocommerce
+include_once( XEROOM_ROOT_PATH . "library/xeroom_indexManager.php" );
+define( 'BASE_PATH', dirname( __FILE__ ) );
+define( 'XERO_KEY', $xeroApiKey );
+define( 'XERO_SECRET', $xeroApiSecret );
+define( 'PUBLIC_KEY', XEROOM_ROOT_PATH . '/library/certs/publickey.cer' );
+define( 'PRIVATE_KEY', XEROOM_ROOT_PATH . '/library/certs/privatekey.pem' );
+define( 'FORMAT', 'json' );
+
+if ( isset( $_POST['xero_oauth_client_id'] ) || isset( $_POST['xero_oauth_client_secret'] ) ) {
+	$taxTableName = $wpdb->prefix . "xeroom_tax";
+	$oauth2 = get_xero_option( 'xero_oauth_options' );
+	$xero_api = new Xero( XERO_KEY, XERO_SECRET, PUBLIC_KEY, PRIVATE_KEY, FORMAT, $oauth2 );
+
+	if ( isset( $_POST['xeroom_tax_method'] ) ) {
+		$getAllTax = $xero_api->TaxRates();
+
+		if ( $getAllTax && array_key_exists( 'TaxRates', $getAllTax ) ) {
+			update_xero_option( 'xero_defined_tax_methods', $getAllTax['TaxRates']['TaxRate'] );
+		}
+	}
+
+	$bank_codes = array();
+	if ( isset( $_POST['xero_default_payment'] ) ) {
+		$getAllBankCodes = $xero_api->Accounts();
+
+		if ( is_array( $getAllBankCodes ) && array_key_exists( 'Accounts', $getAllBankCodes ) ) {
+
+			foreach ( $getAllBankCodes['Accounts']['Account'] as $account_entry ) {
+				if ( 'BANK' == $account_entry['Type'] ) {
+					array_push( $bank_codes, $account_entry['Code'] );
+				}
+			}
+		}
+	}
+
+	$save_settings = array();
+
+	if ( isset( $_POST['xero_api_key'] ) && '' != $_POST['xero_api_key'] ) {
+		$save_settings['xero_api_key'] = sanitize_text_field( $_POST['xero_api_key'] );
+	} else {
+		$save_settings['xero_api_key'] = '';
+	}
+	if ( isset( $_POST['xero_api_secret'] ) && '' != $_POST['xero_api_secret'] ) {
+		$save_settings['xero_api_secret'] = sanitize_text_field( $_POST['xero_api_secret'] );
+	} else {
+		$save_settings['xero_api_secret'] = '';
+	}
+	if ( isset( $_POST['sales_account'] ) && '' != $_POST['sales_account'] ) {
+		$save_settings['sales_account'] = intval( $_POST['sales_account'] );
+	}
+	if ( isset( $_POST['bank_code'] ) && '' != $_POST['bank_code'] ) {
+		$save_settings['bank_code'] = intval( $_POST['bank_code'] );
+	}
+	if ( isset( $_POST['tax_code'] ) && '' != $_POST['tax_code'] ) {
+		$save_settings['tax_code'] = sanitize_text_field( $_POST['tax_code'] );
+	}
+	if ( isset( $_POST['asset_code'] ) && '' != $_POST['asset_code'] ) {
+		$save_settings['asset_code'] = intval( $_POST['asset_code'] );
+	}
+	if ( isset( $_POST['sold_code'] ) && '' != $_POST['sold_code'] ) {
+		$save_settings['sold_code'] = intval( $_POST['sold_code'] );
+	}
+	if ( isset( $_POST['stockMaster'] ) && '' != $_POST['stockMaster'] ) {
+		$save_settings['stock_master'] = sanitize_text_field( $_POST['stockMaster'] );
+	}
+	if ( isset( $_POST['productMaster'] ) && '' != $_POST['productMaster'] ) {
+		$save_settings['product_master'] = sanitize_text_field( $_POST['productMaster'] );
+	}
+	if ( isset( $_POST['paymentMaster'] ) && '' != $_POST['paymentMaster'] ) {
+		$save_settings['payment_master'] = sanitize_text_field( $_POST['paymentMaster'] );
+	}
+
+	if ( ! empty( $save_settings ) ) {
+		$wpdb->update( $xeroCredentialTable, $save_settings, array( 'id' => 1 ) );
+	}
+
+	// Save OAuth 2 data
+	if ( isset( $_POST['xero_oauth_client_id'] ) && '' != $_POST['xero_oauth_client_id'] ) {
+		update_xero_option( 'xero_oauth_client_id', esc_attr( $_POST['xero_oauth_client_id'] ) );
+	}
+
+	if ( isset( $_POST['xero_oauth_client_secret'] ) && '' != $_POST['xero_oauth_client_secret'] ) {
+		update_xero_option( 'xero_oauth_client_secret', esc_attr( $_POST['xero_oauth_client_secret'] ) );
+	}
+
+	// Save Default Invoice Status
+	if ( isset( $_POST['invoiceStatus'] ) && '' != $_POST['invoiceStatus'] ) {
+		update_xero_option( 'xero_default_invoice_status', esc_attr( $_POST['invoiceStatus'] ) );
+	}
+
+	if ( isset( $_POST['shipping_costs'] ) && '' != $_POST['shipping_costs'] ) {
+		update_xero_option( 'xero_default_shipping_costs_code', esc_attr( $_POST['shipping_costs'] ) );
+	}
+
+	if ( isset( $_POST['use_extra_sales_account'] ) && '' != $_POST['use_extra_sales_account'] ) {
+		update_xero_option( 'xero_use_extra_sales_account', esc_attr( $_POST['use_extra_sales_account'] ) );
+	}
+
+	if ( isset( $_POST['generate_credit_note'] ) && '' != $_POST['generate_credit_note'] ) {
+		update_xero_option( 'xero_generate_credit_note', esc_attr( $_POST['generate_credit_note'] ) );
+	}
+
+	if ( isset( $_POST['xeroom_tax_method'] ) && '' != $_POST['xeroom_tax_method'] ) {
+		update_xero_option( 'xero_tax_method', esc_attr( $_POST['xeroom_tax_method'] ) );
+	}
+
+	if ( isset( $_POST['invoice_date'] ) && '' != $_POST['invoice_date'] ) {
+		update_xero_option( 'xero_invoice_date', esc_attr( $_POST['invoice_date'] ) );
+	}
+
+	if ( isset( $_POST['tracking_category'] ) ) {
+		update_xero_option( 'xero_tracking_category', esc_attr( $_POST['tracking_category'] ) );
+	}
+
+	if ( isset( $_POST['xero_send_invoice_method'] ) && '' != $_POST['xero_send_invoice_method'] ) {
+		update_xero_option( 'xero_send_invoice_method', esc_attr( $_POST['xero_send_invoice_method'] ) );
+	}
+
+	if ( isset( $_POST['xero_send_payment_method'] ) && '' != $_POST['xero_send_payment_method'] ) {
+		update_xero_option( 'xero_send_payment_method', esc_attr( $_POST['xero_send_payment_method'] ) );
+	}
+
+	$save_categories = $save_shipping = $save_gateway = $save_tax_method = $xero_taxes = array();
+	foreach ( $_POST as $key => $value ) {
+		if ( 0 === strpos( $key, 'xero_name_tax_', 0 ) ) {
+			$tax_id                = explode( '_', $key );
+			$tax_id                = end( $tax_id );
+			$xero_taxes[ $tax_id ] = esc_attr( $value );
+		}
+		// Associated WOO Gateway
+		if ( xeroom_ends_with( $key, '_payment' ) ) {
+			if ( strpos( $key, 'default' ) === false && '' == $_POST['xero_default_payment'] && ! empty( $value ) ) {
+				$gateway_message = __( 'Please associate Default Payment Gateways Account', 'xeroom' );
+			} else {
+				$save_gateway[ $key ] = esc_attr( $value );
+
+				if ( ! empty( $bank_codes ) && ! in_array( $value, $bank_codes ) && ! empty( $value ) ) {
+					$gateway_message = sprintf( 'Account code %s could not be found. Please Create your bank account on xero and update bank code in xeroom setting\'s bank code.', $value );
+				}
+			}
+		}
+
+		if ( xeroom_ends_with( $key, '_taxmethods' ) ) {
+			$save_tax_method[ $key ] = esc_attr( $value );
+		}
+	}
+
+	//Check for Product Categories and save them
+	if ( ! empty( $_POST['product_account_categories'] ) ) {
+		for ( $cx = 0; $cx < count( $_POST['product_account_categories'] ); $cx ++ ) {
+			if ( '' != $_POST['product_categories'][ $cx ] && '' != $_POST['product_account_categories'][ $cx ] ) {
+				$save_categories[ $cx ] = array( $_POST['product_categories'][ $cx ] => $_POST['product_account_categories'][ $cx ] );
+			} elseif ( '' != $_POST['product_categories'][ $cx ] && '' == $_POST['product_account_categories'][ $cx ] ) {
+				$display_message = __( 'Please associate Xero account to selected categories', 'xeroom' );
+			} elseif ( '' == $_POST['product_categories'][ $cx ] && '' != $_POST['product_account_categories'][ $cx ] ) {
+				$display_message = __( 'Please associate category to Xero account', 'xeroom' );
+			}
+		}
+	}
+
+	//Check for Shipping methods and save them
+	if ( ! empty( $_POST['xeroom_account_shipping_zone'] ) ) {
+		for ( $s = 0; $s < count( $_POST['xeroom_account_shipping_zone'] ); $s ++ ) {
+			if ( '' != $_POST['xeroom_shipping_zone'][ $s ] && '' != $_POST['xeroom_account_shipping_zone'][ $s ] ) {
+				$save_shipping[ $s ] = array( $_POST['xeroom_shipping_zone'][ $s ] => $_POST['xeroom_account_shipping_zone'][ $s ] );
+			} elseif ( '' != $_POST['xeroom_shipping_zone'][ $s ] && '' == $_POST['xeroom_account_shipping_zone'][ $s ] ) {
+				$display_message = __( 'Please associate Xero account to selected shipping zone', 'xeroom' );
+			} elseif ( '' == $_POST['xeroom_shipping_zone'][ $s ] && '' != $_POST['xeroom_account_shipping_zone'][ $s ] ) {
+				$display_message = __( 'Please associate shipping zone to Xero account', 'xeroom' );
+			}
+		}
+	}
+
+	if ( ! empty( $save_categories ) ) {
+		update_xero_option( 'xero_associate_product_categories', $save_categories );
+	}
+
+	if ( ! empty( $save_shipping ) ) {
+		update_xero_option( 'xero_associate_shipping_zones', $save_shipping );
+	}
+
+	if ( ! empty( $save_gateway ) ) {
+		update_xero_option( 'xero_woo_gateway', $save_gateway );
+	}
+
+	if ( ! empty( $xero_taxes ) ) {
+		update_xero_option( 'xero_taxes_association', $xero_taxes );
+	}
+
+	if ( ! empty( $save_tax_method ) ) {
+		update_xero_option( 'xero_tax_methods', $save_tax_method );
+	}
+
+	$wpdb->query( "Delete From " . $taxTableName . " where id!=''" );
+	$message = "Xero credentials saved successfully!";
+
+	if ( isset( $_POST['productMaster'] ) && 'w' == $_POST['productMaster'] ) {
+		xeroom_save_update_tax_rates();
+	}
+}
+
+$sqlcr                  = "SELECT * FROM " . $xeroCredentialTable . " WHERE id=1";
+$xeroCredentialsFromTbl = $wpdb->get_results( $sqlcr );
+
+$xeroApiKey    = $xeroCredentialsFromTbl[0]->xero_api_key;
+$xeroApiSecret = $xeroCredentialsFromTbl[0]->xero_api_secret;
+$salesAccount  = $xeroCredentialsFromTbl[0]->sales_account;
+$bank_Code     = $xeroCredentialsFromTbl[0]->bank_code;
+$tax_Code      = $xeroCredentialsFromTbl[0]->tax_code;
+$asset_Code    = $xeroCredentialsFromTbl[0]->asset_code;
+$sold_Code     = $xeroCredentialsFromTbl[0]->sold_code;
+$stockMaster   = $xeroCredentialsFromTbl[0]->stock_master;
+$productMaster = $xeroCredentialsFromTbl[0]->product_master;
+$paymentMaster = $xeroCredentialsFromTbl[0]->payment_master;
+
+$invoiceStatus            = get_xero_option( 'xero_default_invoice_status' );
+$shippingCosts            = get_xero_option( 'xero_default_shipping_costs_code' );
+$extraSalesAccount        = get_xero_option( 'xero_use_extra_sales_account' );
+$credit_note              = get_xero_option( 'xero_generate_credit_note' );
+$woo_gateway              = get_xero_option( 'xero_woo_gateway' );
+$invoice_date             = get_xero_option( 'xero_invoice_date' );
+$tracking_category        = get_xero_option( 'xero_tracking_category' );
+$send_invoice_method      = get_xero_option( 'xero_send_invoice_method' );
+$send_payment_method      = get_xero_option( 'xero_send_payment_method' );
+$xero_oauth_client_id     = get_xero_option( 'xero_oauth_client_id' );
+$xero_oauth_client_secret = get_xero_option( 'xero_oauth_client_secret' );
+
+$xeroom_tax_method = 'xero_simple_tax';
+$fetch_tax_method  = get_xero_option( 'xero_tax_method' );
+if ( $fetch_tax_method ) {
+	$xeroom_tax_method = $fetch_tax_method;
+}
+
+$default_gateway_account = $bank_Code;
+if ( $woo_gateway && $woo_gateway['xero_default_payment'] ) {
+	$default_gateway_account = $woo_gateway['xero_default_payment'];
+}
+
+$email_request_response = '';
+if ( sanitize_text_field( isset( $_POST['zeroom_license_email'] ) ) && sanitize_text_field( $_POST['zeroom_license_email'] ) != "" ) {
+	$user_email = sanitize_email( $_POST['zeroom_license_email'] );
+	include_once( ABSPATH . WPINC . '/class-phpmailer.php' );
+
+	$mail = new PHPMailer;
+	$mail->isSMTP();
+//    $mail->SMTPDebug = 3;
+//    $mail->Debugoutput = 'html';
+	$mail->Host     = 'smtp.gmail.com';
+	$mail->Port     = 587;
+	$mail->SMTPAuth = true;
+	$mail->Username = 'xeroom1@gmail.com';
+	$mail->Password = 'hcf$^&98*()atb1';
+	$mail->isHTML( true );
+	$mail->SMTPOptions = array(
+		'ssl' => array(
+			'verify_peer'       => false,
+			'verify_peer_name'  => false,
+			'allow_self_signed' => true
+		)
+	);
+
+	$blogname = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
+
+	$user_info  = get_userdata( get_current_user_id() );
+	$user_login = $user_info->last_name . " " . $user_info->first_name;
+
+	$email_message = sprintf( __( 'You got a Trial License Request for %s:' ), $blogname ) . "\r\n\r\n";
+	$email_message .= sprintf( __( 'From Name: %s' ), $user_login ) . "\r\n\r\n";
+	$email_message .= sprintf( __( 'With E-mail: %s' ), $user_email ) . "\r\n";
+
+	$mail->Subject = __( 'Free Licence', 'xeroom' );
+	$mail->setFrom( $user_email, sprintf( __( 'From Name: %s' ), $user_login ) );
+	$mail->AddReplyTo( $user_email, sprintf( __( 'From Name: %s' ), $user_login ) );
+	$mail->addAddress( 'licence@xeroom.com', 'Free Licence' );
+	$mail->Body    = $email_message;
+	$mail->AltBody = $email_message;
+
+//	$sending_result = mail( 'licence@xeroom.com', __( 'Free Licence', 'xeroom' ), $email_message );
+
+	if ( ! $mail->send() ) {
+		$email_request_response = __( 'Sorry free licences are no longer available. To do a trail please purchase a full licence and you have 30 days to cancel if not suitable.' );
+	} else {
+		$email_request_response = __( 'Your trial licence request was sent.  Please check your email and spam for the auto-reply.' );
+	}
+}
+
+if ( sanitize_text_field( isset( $_POST['zeroom_license_key'] ) ) && sanitize_text_field( $_POST['zeroom_license_key'] ) != "" ) {
+	$license_key  = sanitize_text_field( $_POST['zeroom_license_key'] );
+	$url          = "https://www.xeroom.com/apidata.php?license_key=" . $license_key;
+	$result       = wp_remote_fopen( esc_url( $url ) );
+	$validLicense = json_decode( $result, true );
+	if ( count( $validLicense ) > 0 ) {
+		if ( $validLicense[0]['lic_status'] == 'active' ) {
+			$wpdb->update( $xeroLicActive,
+				array(
+					'license_key' => $license_key,
+					'status'      => 'active',
+					'xero_method' => 'premium'
+				),
+				array( 'id' => 1 ) );
+			$licenseMessage = "Xeroom Premium Version is Successfully Activated!";
+			update_xero_option( 'xero_connection_status', 'active' );
+			update_xero_option( 'xero_connection_status_message', '' );
+		} else {
+			$licenseErrMessage = "Your Premium Version key is not active or is expired. Please contact xeroom support for assistance.";
+			update_xero_option( 'xero_connection_status', 'failed' );
+			update_xero_option( 'xero_connection_status_message', $licenseErrMessage );
+		}
+	} else {
+		$licenseErrMessage = "Your Premium Version key is not active or is expired. Please contact xeroom support for assistance.";
+		update_xero_option( 'xero_connection_status', 'failed' );
+		update_xero_option( 'xero_connection_status_message', $licenseErrMessage );
+	}
+}
+
+//if ( sanitize_text_field( isset( $_POST['zeroom_license_email'] ) ) && sanitize_text_field( $_POST['zeroom_license_email'] != "" ) ) {
+//	$subEmail     = sanitize_email( $_POST['zeroom_license_email'] );
+//	$url          = "https://www.xeroom.com/emailsubscription.php?subscription_email=" . $subEmail;
+//	$result       = wp_remote_fopen( esc_url( $url ) );
+//	$validLicense = json_decode( $result, true );
+//	if ( count( $validLicense ) > 0 ) {
+//		$licenseKey = sanitize_text_field( $validLicense[0]['license_key'] );
+//		$wpdb->update( $xeroLicActive,
+//			array(
+//				'license_key' => $licenseKey,
+//				'status'      => 'active',
+//				'xero_method' => 'trail',
+//			),
+//			array( 'id' => 1 ) );
+//		$licenseMessage = "Xeroom Free Version is Successfully Activated!";
+//	} else {
+//		$licenseErrMessage = "OOPS! Something went wrong please try again.";
+//		update_xero_option( 'xero_connection_status', $licenseErrMessage );
+//	}
+//}
+
+$sql                 = "SELECT * FROM " . $xeroLicActive . " WHERE id=1";
+$xeroLicensekeyAct   = $wpdb->get_results( $sql );
+$xero_plugin_staus   = sanitize_text_field( $xeroLicensekeyAct[0]->status );
+$xero_plugin_license = sanitize_text_field( $xeroLicensekeyAct[0]->license_key );
+$xero_plugin_method  = sanitize_text_field( $xeroLicensekeyAct[0]->xero_method );
+$wait                = "Yes";
+
+if ( $xero_plugin_method == "premium" ) {
+	if ( $xero_plugin_staus == "active" ) {
+		$xeroMesssage = "Xeroom Premium Active";
+	} else {
+		$xeroMesssage = "Xeroom Premium Deactive";
+	}
+} else {
+	if ( $xero_plugin_staus == "active" ) {
+		$xeroMesssage = "Free Version Active";
+	} else {
+		$xeroMesssage = "Awaiting Activation!";
+		$wait         = "no";
+	}
+}
+$apijspath = esc_url( XEROOM_JS_PATH . 'xeroom_api_fields.js' );
+wp_enqueue_script( 'xeroom_api_fields', $apijspath );
+
+// Read WooCommerce Installed Payment Methods
+$installed_payment_methods = WC()->payment_gateways->get_available_payment_gateways();
+
+$tax_classes = WC_Tax::get_tax_classes();
+
+// Fetch last log
+$sql_debug = "SELECT * FROM `" . $wpdb->prefix . "xeroom_debug` ORDER BY id DESC";
+$get_debug = $wpdb->get_row( $sql_debug );
+
+if ( isset( $_POST['xero_oauth_client_id'] ) ) {
+	$oauth2 = get_xero_option( 'xero_oauth_options' );
+	$xero_api = new Xero( $xeroApiKey, $xeroApiSecret, PUBLIC_KEY, PRIVATE_KEY, FORMAT, $oauth2 );
+
+	$get_currencies = $xero_api->Currencies();
+
+	if ( $get_currencies ) {
+		if ( is_array( $get_currencies ) ) {
+			update_xero_option( 'xero_connection_status', 'active' );
+			update_xero_option( 'xero_connection_status_message', '' );
+		} else {
+			if ( is_array( $get_currencies ) ) {
+				$errD = $get_currencies['Elements']['DataContractBase']['ValidationErrors']['ValidationError']['Message'];
+				update_xero_option( 'xero_connection_status_message', $errD );
+				update_xero_option( 'xero_connection_status', 'failed' );
+			} else {
+				update_xero_option( 'xero_connection_status_message', $get_currencies );
+				update_xero_option( 'xero_connection_status', 'failed' );
+			}
+		}
+	} else {
+		update_xero_option( 'xero_connection_status_message', 'Connection to Xero API failed!' );
+		update_xero_option( 'xero_connection_status', 'failed' );
+	}
+}
+
+$connection_status         = get_xero_option( 'xero_connection_status' );
+$connection_status_message = get_xero_option( 'xero_connection_status_message' );
+
+if ( isset( $_GET['authorize'] ) ) {
+	require_once( XEROOM_ROOT_PATH . 'storage.php' );
+	$storage = new StorageClass();
+
+	$provider = new \League\OAuth2\Client\Provider\GenericProvider( [
+		'clientId'                => $xero_oauth_client_id,
+		'clientSecret'            => $xero_oauth_client_secret,
+		'redirectUri'             => get_rest_url( null, 'xeroom/v2/oauth_callback' ),
+		'urlAuthorize'            => 'https://login.xero.com/identity/connect/authorize',
+		'urlAccessToken'          => 'https://identity.xero.com/connect/token',
+		'urlResourceOwnerDetails' => 'https://api.xero.com/api.xro/2.0/Organisation',
+	] );
+
+	$options = [
+		'scope' => [ 'openid email profile offline_access accounting.settings accounting.transactions accounting.contacts accounting.journals.read accounting.reports.read accounting.attachments' ]
+	];
+
+	// This returns the authorizeUrl with necessary parameters applied (e.g. state).
+	$authorizationUrl = $provider->getAuthorizationUrl( $options );
+
+	// Save the state generated for you and store it to the session.
+	$_SESSION['oauth2state'] = $provider->getState();
+
+	// Redirect the user to the authorization URL.
+	header( 'Location: ' . $authorizationUrl );
+	exit();
+}
+?>
+    <div id="getstatus"></div>
+    <div class="xero_left xero_inputdiv">
+        <div class="xeroom-logo"><img src="<?php echo XEROOM_HTTP_PATH; ?>images/logo/xeroom.png"></div>
+        <div style="text-align: center; margin-top: 51px; width: 100%; margin-bottom: -40px;"><h3><?php echo sprintf( '%s %s', __( 'Version' ), XEROOM_VERSION ); ?></h3></div>
+    </div>
+    <div class="xero_clear"></div>
+<?php if ( sanitize_text_field( ! isset( $_REQUEST['xeroom_debug'] ) ) && sanitize_text_field( ! isset( $_REQUEST['xeroom_upload'] ) ) ) { ?>
+    <div class="content">
+        <div class="xero_clear"></div>
+        <h3>Generate Xeroom License Key</h3>
+        <div class="xero_heading" style="margin-left:220px"><?php echo $email_request_response; ?></div>
+        <div class="xero_clear"></div>
+        <div class="xero_lic_button">
+            <div class="xero_left xero_trail" onclick="showEmailForm()">Get Xeroom Trial License</div>
+            <a href="https://xeroom.com/product/xeroom-premium-version/" target="_blank">
+                <div class="xero_left xero_premium">Get Premium Xeroom</div>
+            </a>
+        </div>
+        <div class="xero_clear"></div>
+        <div class="xeroUnderneath"></div>
+        <div class="xero_clear"></div>
+        <div class="button-primary xero-primary xeroInstButton" onclick="window.open('https://www.xeroom.com/installation-instructions/','_blank')">Installation Instructions</div>
+        <div class="button-primary xero-primary xeroInstButton" onclick="window.open('https://www.xeroom.com/support/','_blank')" style="margin-left: 12px ! important;">Support, Fixes &
+            Upgrades
+        </div>
+        <div class="button-primary xero-primary xeroInstButton" onclick="window.open('https://www.xeroom.com/','_blank')" style="margin-left: 12px ! important;">Xeroom Website</div>
+        <div class="xero_clear"></div>
+        <div class="xero_email" id="xero_email">
+            <form method="post" name="zeroom_email" action="">
+                <div class="xero_left xero_label">Enter Email Address</div>
+                <div class="xero_left xero_inputdiv">
+                    <label for="zeroom_license_email"><?php echo __( 'Please enter your email and we’ll send you the license', 'xeroom' ); ?></label><br/>
+                    <input type="text" value="" class="xero_input" id="zeroom_license_email" name="zeroom_license_email" placeholder="Please enter valid email address!">
+                </div>
+                <div class="xero_clear"></div>
+                <div class="button-primary xero-primery" onclick="check_zeroom_email();"><?php echo __( 'Send me the license', 'xeroom' ); ?></div>
+                <div class="button-primary xero-primery" onclick="hideEmailForm();" style="margin: 12px 0 0 15px !important;">Cancel</div>
+            </form>
+        </div>
+    </div>
+    <div class="content">
+        <div class="xero_clear"></div>
+        <h3>Xeroom License Key</h3>
+        <div class="xero_clear"></div>
+		<?php if ( isset( $licenseMessage ) && $licenseMessage != "" ) { ?>
+            <div class="xero_heading" style="margin-left:220px"><?php echo $licenseMessage; ?></div>
+		<?php } else if ( isset( $licenseErrMessage ) && $licenseErrMessage != "" ) { ?>
+            <div class="xero_heading" style="color:red !important;margin-left:220px"><?php echo $licenseErrMessage; ?></div>
+		<?php } ?>
+        <div class="xero_clear"></div>
+        <div class="xero_license">
+            <form method="post" name="zeroom_activate_license" id="zeroom_activate_license" action="">
+                <div class="xero_clear"></div>
+                <div class="xero_left xero_label">Status</div>
+                <div class="xero_left xero_inputdiv">
+					<?php if ( $xero_plugin_staus == 'active' ) { ?>
+                        <div class="xero_premium xero_statusn" style="background-color:<?php if ( $xero_plugin_method == "trail" ) {
+							echo "#00cc00";
+						} else {
+							echo "#00802B";
+						} ?>"><?php echo $xeroMesssage; ?></div>
+					<?php } else { ?>
+                        <div class="xero_trail xero_statusn" style="background-color:#119DCB;"><?php echo $xeroMesssage; ?></div>
+					<?php } ?>
+                </div>
+                <div class="xero_clear"></div>
+                <div class="xero_left xero_label">Xeroom License Key</div>
+                <div class="xero_left xero_inputdiv">
+                    <input type="text" value="<?php echo '' != $xero_plugin_license ? $xero_plugin_license : ''; ?> " class="xero_input" id="zeroom_license_key" name="zeroom_license_key"
+                           placeholder="Please enter Xeroom license key!">
+                </div>
+                <div class="xero_clear"></div>
+                <div class="button-primary xero-primery" onclick="check_license_key();">Submit</div>
+            </form>
+        </div>
+    </div>
+    <div class="content">
+        <div class="xero_clear"></div>
+        <h3>Xero Settings</h3>
+        <div class="xero_clear"></div>
+        <span class="xero_heading" style="margin-left: 220px;"><?php echo $message; ?></span>
+        <div class="clear"></div>
+        <span class="xero_heading" style="color:red;margin-left: 220px;"><?php echo $display_message; ?></span>
+        <div class="clear"></div>
+        <div>
+            <form action="" method="post" name="xero_api_key_submit" id="xero_form_settings">
+<!--                <div class="clear"></div>-->
+<!--                <div>-->
+<!--                    <div class="xero_left xero_label">Xero Api Key</div>-->
+<!--                    <div class="xero_left xero_inputdiv">-->
+<!--                        <input type="text" placeholder="Enter Your Xero Api Key" value="--><?php //echo $xeroApiKey; ?><!--" class="xero_input" name="xero_api_key" id="xero_api_key">-->
+<!--                    </div>-->
+<!--                </div>-->
+<!--                <div class="clear"></div>-->
+<!--                <div>-->
+<!--                    <div class="xero_left xero_label">Xero Api Secret</div>-->
+<!--                    <div class="xero_left xero_inputdiv">-->
+<!--                        <input type="text" placeholder="Enter Your Xero Secret Key" value="--><?php //echo $xeroApiSecret; ?><!--" class="xero_input" name="xero_api_secret" id="xero_api_secret">-->
+<!--                    </div>-->
+<!--                </div>-->
+                <div class="clear"></div>
+                <div><h4>Xero OAuth 2.0</h4></div>
+                <div class="clear"></div>
+                <div>
+                    <div class="xero_left xero_label">Xero Client ID</div>
+                    <div class="xero_left xero_inputdiv">
+                        <input type="text" placeholder="Xero OAuth 2.0 credentials Client ID" value="<?php echo $xero_oauth_client_id; ?>" class="xero_input" name="xero_oauth_client_id"
+                               id="xero_oauth_client_id">
+                    </div>
+                </div>
+                <div class="clear"></div>
+                <div>
+                    <div class="xero_left xero_label">Xero Client Secret</div>
+                    <div class="xero_left xero_inputdiv">
+                        <input type="text" placeholder="Enter Your Xero OAuth 2.0 credentials Client Secret" value="<?php echo $xero_oauth_client_secret; ?>" class="xero_input"
+                               name="xero_oauth_client_secret" id="xero_oauth_client_secret">
+                    </div>
+                </div>
+				<?php if ( $xero_oauth_client_secret && $xero_oauth_client_id ) { ?>
+                    <div class="clear"></div>
+                    <div>
+                        <a href="<?php echo admin_url( 'admin.php?page=add_xero_api_fields&authorize' ); ?>" class="button btn button-primary"><?php echo __( 'Xero Authorize', 'xeroom' ); ?></a>
+                    </div>
+				<?php } ?>
+                <div class="clear"></div>
+                <div>
+                    <div class="xero_left xero_label"><?php echo __( 'Xero Connection Status', 'xeroom' ); ?></div>
+                    <div class="xero_left xero_inputdiv">
+						<?php if ( $connection_status ) { ?>
+                            <div class="xeroom-connection-status<?php echo 'active' == $connection_status ? ' xero-active' : ' xero-failed'; ?>"><?php echo 'active' == $connection_status ? __( 'Active', 'xeroom' ) : __( 'Failed', 'xeroom' ); ?></div>
+						<?php } else { ?>
+                            <div class="xeroom-connection-status grey"><?php echo __( 'Active', 'xeroom' ) . '/' . __( 'Failed', 'xeroom' ); ?></div>
+						<?php }
+						if ( $connection_status && 'failed' == $connection_status ) {
+                            $is_json = json_decode( str_replace('<br/>', '',$connection_status_message), true );
+                            
+							if ( $is_json ) {
+								$connection_status_message = $is_json['Detail'];
+							}
+							?>
+                            <div class="xeroom-debug-message"><?php echo "<b>" . __( 'New Debug Message:', 'xeroom' ) . "</b><br/>";
+								echo htmlspecialchars_decode( esc_attr( $connection_status_message ) ); ?></div>
+						<?php } ?>
+                    </div>
+                </div>
+                <div class="clear"></div>
+				<?php
+				if ( isset ( $_GET['tab'] ) ) {
+					xero_settings_tabs( $_GET['tab'] );
+				} else {
+					xero_settings_tabs( 'general' );
+				}
+				?>
+				<?php
+				$tab = 'general';
+				if ( isset ( $_GET['tab'] ) ) {
+					$tab = $_GET['tab'];
+				}
+				switch ( $tab ) {
+					case "taxes" : ?>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Select tax methods', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="xeroom_tax_method" id="xero_simple_tax"
+                                               value="xero_simple_tax" <?php checked( 'xero_simple_tax', $xeroom_tax_method ); ?>> <?php echo __( 'Simple Tax Methods', 'xeroom' ); ?> &nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="xeroom_tax_method" id="xero_complex_tax"
+                                               value="xero_complex_tax" <?php checked( 'xero_complex_tax', $xeroom_tax_method ); ?>> <?php echo __( 'Complex Tax Methods', 'xeroom' ); ?>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="xero_tax_methods_content">
+							<?php
+							if ( $tax_classes && get_option( 'woocommerce_calc_taxes' ) === 'yes' ) {
+								$fetch_saved_tax = get_xero_option( 'xero_tax_methods' );
+								?>
+                                <div class="clear"></div>
+                                <div>
+                                    <div class="xero_left xero_label"><?php echo sprintf( '%s %s %s', __( 'Xero', 'xeroom' ), __( 'Standard', 'xeroom' ), __( 'Tax Name', 'xeroom' ) ); ?></div>
+                                    <div class="xero_left xero_inputdiv xero_simple_tax">
+                                        <input type="text" placeholder="<?php echo sprintf( '%s %s %s', __( 'Enter Xero', 'xeroom' ), __( 'Standard', 'xeroom' ), __( 'Tax Name', 'xeroom' ) ); ?>"
+                                               value="<?php echo $fetch_saved_tax && array_key_exists( 'xero_standard_taxmethods', $fetch_saved_tax ) && '' != $fetch_saved_tax['xero_standard_taxmethods'] ? $fetch_saved_tax['xero_standard_taxmethods'] : ''; ?>"
+                                               class="xero_input" name="xero_standard_taxmethods"
+                                               id="xero_standard_tax">
+                                    </div>
+                                    <div class="xero_left xero_inputdiv xero_complex_tax">
+										<?php
+										$display_standard_tax = WC_Tax::get_rates_for_tax_class( '' );
+										if ( $display_standard_tax ) {
+											generate_xero_settings_tax_table( $display_standard_tax );
+										}
+										?>
+                                    </div>
+                                </div>
+								<?php
+								foreach ( $tax_classes as $class ) {
+									$tax_class_slug     = strtolower( str_replace( ' ', '_', $class ) );
+									$tax_class_woo_slug = strtolower( str_replace( ' ', '-', $class ) );
+									?>
+                                    <div class="clear"></div>
+                                    <div>
+                                        <div class="xero_left xero_label"><?php echo sprintf( '%s %s %s', __( 'Xero', 'xeroom' ), esc_attr( $class ), __( 'Tax Name', 'xeroom' ) ); ?></div>
+                                        <div class="xero_left xero_inputdiv xero_simple_tax">
+                                            <input type="text" placeholder="<?php echo sprintf( '%s %s %s', __( 'Enter Xero', 'xeroom' ), esc_attr( $class ), __( 'Tax Name', 'xeroom' ) ); ?>"
+                                                   value="<?php echo $fetch_saved_tax && array_key_exists( 'xero_' . esc_attr( $tax_class_woo_slug ) . '_taxmethods', $fetch_saved_tax ) && '' != $fetch_saved_tax[ 'xero_' . esc_attr( $tax_class_woo_slug ) . '_taxmethods' ] ? $fetch_saved_tax[ 'xero_' . esc_attr( $tax_class_woo_slug ) . '_taxmethods' ] : ''; ?>"
+                                                   class="xero_input" name="xero_<?php echo esc_attr( $tax_class_woo_slug ); ?>_taxmethods"
+                                                   id="xeroom_<?php echo esc_attr( $tax_class_slug ); ?>_tax">
+                                        </div>
+
+                                        <div class="xero_left xero_inputdiv xero_complex_tax">
+											<?php
+											$display_standard_tax = WC_Tax::get_rates_for_tax_class( $tax_class_woo_slug );
+											if ( $display_standard_tax ) {
+												generate_xero_settings_tax_table( $display_standard_tax );
+											}
+											?>
+                                        </div>
+                                    </div>
+								<?php }
+							}
+							?>
+                        </div>
+
+                        <div class="clear">
+                            <hr/>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="button-primary xero-primery" onclick="submitLicKey();">Submit</div>
+						<?php
+						break;
+					case "sync" :
+						$sync_data = get_xero_option( 'sync_stock_data' );
+						?>
+                        <h3><?php echo __( 'Global Inventory Sync', 'xeroom' ); ?></h3>
+                        <p><?php echo __( 'The below setting shows who’s Master when Sync all products. You can update a maximum of 500 items/products stock per request.', 'xeroom' ); ?></p>
+                        <p><?php echo __( 'Please ensure you press button twice to avoid errors on stockouts.', 'xeroom' ); ?></p>
+                        <p><?php if ( wp_next_scheduled( 'xeroom_sync_schedule' ) ) {
+								echo sprintf( '%s %s <a href="%s" target="_blank">%s</a>', __( 'Sync job in progress!', 'xeroom' ), __( 'Please', 'xeroom' ), admin_url( 'admin.php?page=xeroom_debug_page' ), __( 'check Xeroom logs here', 'xeroom' ) );
+							} ?></p>
+                        <div id="xeroom_sync_response"></div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Sync all products', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input <?php checked( isset( $sync_data['sync_master'] ) && 'w' == $sync_data['sync_master'] ); ?> type="radio" class="xero_input" name="sync_master"
+                                                                                                                                           value="w"/> <?php echo __( 'Woo to Xero', 'xeroom' ); ?>
+                                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                    <label>
+                                        <input <?php checked( isset( $sync_data['sync_master'] ) && 'x' == $sync_data['sync_master'] ); ?> type="radio" class="xero_input" name="sync_master"
+                                                                                                                                           value="x"/> <?php echo __( 'Xero to Woo', 'xeroom' ); ?>
+                                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Automated sync schedule', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input <?php checked( isset( $sync_data['sync_schedule'] ) && 'n' == $sync_data['sync_schedule'] ); ?> type="radio" class="xero_input" name="sync_schedule"
+                                                                                                                                               value="n"/> <?php echo __( 'None', 'xeroom' ); ?> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                    <label>
+                                        <input <?php checked( isset( $sync_data['sync_schedule'] ) && 'h' == $sync_data['sync_schedule'] ); ?> type="radio" class="xero_input" name="sync_schedule"
+                                                                                                                                               value="h"/> <?php echo __( 'Hourly', 'xeroom' ); ?>
+                                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                    <label>
+                                        <input <?php checked( isset( $sync_data['sync_schedule'] ) && 'd' == $sync_data['sync_schedule'] ); ?> type="radio" class="xero_input" name="sync_schedule"
+                                                                                                                                               value="d"/> <?php echo __( 'Daily', 'xeroom' ); ?> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Batch size for sync', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="number" value="<?php echo isset( $sync_data['batch_sync_size'] ) ? $sync_data['batch_sync_size'] : ''; ?>" class="xero_input" name="batch_sync_size"
+                                       id="batch_sync_size" min="1" max="500"/>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="clear">
+                            <hr/>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="button-primary xero-primery" id="xeroom_sync_now"><?php echo __( 'Synch Now', 'xeroom' ); ?></div>
+						<?php
+						break;
+					default:
+						?>
+
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Sales Account', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="text" value="<?php echo $salesAccount; ?>" class="xero_input" name="sales_account" id="sales_account">
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Shipping/Carriage Costs', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="text" value="<?php echo $shippingCosts; ?>" class="xero_input" name="shipping_costs" id="shipping_costs">
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="clear">
+                            <hr/>
+                        </div>
+                        <div>
+                            <div class="xero_label_section"><?php echo __( 'Map Payment Methods to Bank Accounts', 'xeroom' ); ?></div>
+                        </div>
+                        <div class="clear"></div>
+                        <span class="xero_heading" style="color:red;margin-left: 220px;"><?php echo $gateway_message; ?></span>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Default Payment Gateway Account', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="number" placeholder="<?php echo __( 'Enter Xero Default Payment Gateway Account', 'xeroom' ); ?>"
+                                       value="<?php echo $default_gateway_account; ?>" class="xero_input" name="xero_default_payment" id="xero_default_payment"/>
+                            </div>
+                        </div>
+						<?php
+						if ( $installed_payment_methods ) {
+							foreach ( $installed_payment_methods as $method ) {
+								$gateway_account = '';
+								if ( $woo_gateway && array_key_exists( 'xero_' . $method->id . '_payment', $woo_gateway ) ) {
+									$gateway_account = $woo_gateway[ 'xero_' . $method->id . '_payment' ];
+								}
+								?>
+                                <div class="clear"></div>
+                                <div>
+                                    <div class="xero_left xero_label"><?php echo sprintf( '%s %s', __( 'Enter Xero account for ', 'xeroom' ), esc_attr( $method->title ) ); ?></div>
+                                    <div class="xero_left xero_inputdiv">
+                                        <input type="number" placeholder="<?php echo sprintf( '%s %s', __( 'Enter Xero account for ', 'xeroom' ), esc_attr( $method->title ) ); ?>"
+                                               value="<?php echo esc_attr( $gateway_account ); ?>" class="xero_input" name="xero_<?php echo esc_attr( $method->id ); ?>_payment"
+                                               id="xeroom_<?php echo esc_attr( $method->id ); ?>_payment">
+                                    </div>
+                                </div>
+							<?php }
+						}
+						?>
+                        <div class="clear">
+                            <hr/>
+                        </div>
+						<?php if ( ! wc_tax_enabled() ) { ?>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label">Sales Tax Account Name</div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="text" value="<?php echo $tax_Code; ?>" class="xero_input" name="tax_code" id="tax_account">
+                            </div>
+                        </div>
+					<?php } ?>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label">Inventory Asset Account</div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="text" value="<?php echo $asset_Code; ?>" class="xero_input" name="asset_code" id="asset_code">
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label">Goods Sold Account</div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="text" value="<?php echo $sold_Code; ?>" class="xero_input" name="sold_code" id="sold_code">
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label">Synch Inventory Master</div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="stockMaster" value="w" id="wooMaster" <?php if ( $stockMaster == "w" ) {
+											echo 'checked="checked"';
+										} ?>> Woocommerce &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="stockMaster" value="x" id="xeroMaster" <?php if ( $stockMaster == "x" ) {
+											echo 'checked="checked"';
+										} ?>> Xero &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="stockMaster" value="n" id="noneMaster" <?php if ( $stockMaster == "n" ) {
+											echo 'checked="checked"';
+										} ?>> None
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label">Prod Desc and Price Master</div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="productMaster" id="wooPMaster" value="w" <?php if ( $productMaster == "w" ) {
+											echo 'checked="checked"';
+										} ?>> Woocommerce &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="productMaster" id="xeroPMaster" value="x" <?php if ( $productMaster == "x" ) {
+											echo 'checked="checked"';
+										} ?>> Xero
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Create Invoices as', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="invoiceStatus" value="DRAFT" <?php checked( 'DRAFT', $invoiceStatus ); ?>> <?php echo __( 'Draft', 'xeroom' ); ?>
+                                        &nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="invoiceStatus"
+                                               value="AUTHORISED" <?php checked( 'AUTHORISED', $invoiceStatus ); ?>> <?php echo __( 'Awaiting Payment', 'xeroom' ); ?>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Set Invoice Creation Date', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="invoice_date"
+                                               value="posting_date" <?php checked( 'posting_date', $invoice_date ); ?>> <?php echo __( 'Date of posting', 'xeroom' ); ?>
+                                        &nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="invoice_date"
+                                               value="order_date" <?php checked( 'order_date', $invoice_date ); ?>> <?php echo __( 'Date of order', 'xeroom' ); ?>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Post Credit Note when order is cancelled?', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="generate_credit_note" value="1" <?php checked( '1', $credit_note ); ?>> <?php echo __( 'Yes', 'xeroom' ); ?> &nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="generate_credit_note" value="0" <?php checked( '0', $credit_note ); ?>> <?php echo __( 'No', 'xeroom' ); ?>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Use Extra Sales Accounts', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <div style="font-weight: bold; margin-top: 8px;">
+                                    <label>
+                                        <input type="radio" class="xero_input" name="use_extra_sales_account" id="product_categories"
+                                               value="product_categories" <?php checked( 'product_categories', $extraSalesAccount ); ?>> <?php echo __( 'Product Categories', 'xeroom' ); ?> &nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="use_extra_sales_account" id="geography_zones"
+                                               value="geography_zones" <?php checked( 'geography_zones', $extraSalesAccount ); ?>> <?php echo __( 'Geography Zones/Regions', 'xeroom' ); ?> &nbsp;
+                                    </label>
+                                    <label>
+                                        <input type="radio" class="xero_input" name="use_extra_sales_account" id="none"
+                                               value="none" <?php checked( 'none', $extraSalesAccount ); ?>> <?php echo __( 'None', 'xeroom' ); ?>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="xeroom_use_extra_sales_accounts">
+                            <div class="product_categories">
+                                <div class="xero_left xero_label"><?php echo sprintf( '<div>%s</div>', __( 'Associate Product Categories', 'xeroom' ) ); ?></div>
+                                <div class="xero_left xero_inputdiv" id="product_categories_content"><?php include( plugin_dir_path( __FILE__ ) . '../templates/product_categories.php' ); ?></div>
+                            </div>
+                            <div class="geography_zones">
+                                <div class="xero_left xero_label"><?php echo sprintf( '<div>%s</div>', __( 'Associate Geography Zones/Regions', 'xeroom' ) ); ?></div>
+                                <div class="xero_left xero_inputdiv" id="geography_zones_content"><?php include( plugin_dir_path( __FILE__ ) . '../templates/geography_zones.php' ); ?></div>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Send Invoices', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <select class="xeroom-select" name="xero_send_invoice_method">
+                                    <option value="manually" <?php selected( $send_invoice_method, 'manually' ); ?>><?php echo __( 'Manually', 'xeroom' ); ?></option>
+                                    <option value="on_creation" <?php selected( $send_invoice_method, 'on_creation' ); ?>><?php echo __( 'On Creation', 'xeroom' ); ?></option>
+                                    <option value="on_completion" <?php selected( $send_invoice_method, 'on_completion' ); ?>><?php echo __( 'On Completion', 'xeroom' ); ?></option>
+                                </select>
+
+                                <p><?php echo __( 'Send Invoice manually (from the order\'s action menu), on creation (when order is created), or on completion (when order status is changed to complete)', 'xeroom' ); ?></p>
+                            </div>
+                        </div>
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Send Payments', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <select class="xeroom-select" name="xero_send_payment_method">
+                                    <option value="manually" <?php selected( $send_payment_method, 'manually' ); ?>><?php echo __( 'Manually', 'xeroom' ); ?></option>
+                                    <option value="automatically" <?php selected( $send_payment_method, 'automatically' ); ?>><?php echo __( 'Automatically', 'xeroom' ); ?></option>
+                                </select>
+
+                                <p><?php echo __( 'Send Payments manually when order is completed. This may need to be turned off if you sync via separate integration such as PayPal', 'xeroom' ); ?></p>
+                            </div>
+                        </div>
+                        <!--                        <div class="clear"></div>-->
+                        <!--                        <div>-->
+                        <!--                            <div class="xero_left xero_label">--><?php //echo __( 'Auto Complete', 'xeroom' );
+						?><!--</div>-->
+                        <!--							--><?php //if ( $paymentMaster == "y" ) {
+						?>
+                        <!--                                <style>#payment_auto_message {-->
+                        <!--                                        display: none;-->
+                        <!--                                    }</style>-->
+                        <!--							--><?php //}
+						?>
+                        <!--                            <div class="xero_left xero_inputdiv">-->
+                        <!--                                <div style="font-weight: bold; margin-top: 8px;">-->
+                        <!--                                    <label>-->
+                        <!--                                        <input onclick="return hideXeroomMessage();" type="radio" class="xero_input" name="paymentMaster" id="wooPMaster" value="y" --><?php //if ( $paymentMaster == "y" ) {
+//											echo 'checked="checked"';
+//										}
+						?><!-- Yes &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-->
+                        <!--                                    </label>-->
+                        <!--                                    <label>-->
+                        <!--                                        <input onclick="return showXeroomMessage();" type="radio" class="xero_input" name="paymentMaster" id="xeroPMaster"-->
+                        <!--                                               value="n" --><?php //if ( $paymentMaster == "n" ) {
+//											echo 'checked="checked"';
+//										}
+						?><!-- No-->
+                        <!--                                    </label>-->
+                        <!--                                    <br>-->
+                        <!--                                    <div id="payment_auto_message">You need to complete the order in Woo and post it to Xero with the payment.</div>-->
+                        <!--                                </div>-->
+                        <!--                            </div>-->
+                        <!--                        </div>-->
+                        <div class="clear"></div>
+                        <div>
+                            <div class="xero_left xero_label"><?php echo __( 'Tracking Category', 'xeroom' ); ?></div>
+                            <div class="xero_left xero_inputdiv">
+                                <input type="text" value="<?php echo $tracking_category; ?>" class="xero_input" name="tracking_category" id="tracking_category">
+                                <br>
+                                <div><?php echo __( 'Insert Xero Tracking Category Name', 'xeroom' ); ?></div>
+                            </div>
+                        </div>
+                        <div class="clear">
+                            <hr/>
+                        </div>
+                        <div class="clear"></div>
+                        <div class="button-primary xero-primery" onclick="submitLicKey();">Submit</div>
+						<?php break;
+				} ?>
+                <div class="clear"></div>
+            </form>
+        </div>
+    </div>
+<?php } ?>
